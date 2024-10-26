@@ -5,6 +5,8 @@
 extern "C" {
 #endif
 
+#include <stdarg.h>
+
 enum blu_json_val_types_e {
     BLU_JSON_VAL_PRIMITIVE = 0,
     BLU_JSON_VAL_OBJ,
@@ -23,8 +25,9 @@ enum blu_json_datatypes_e {
 #define BLU_JSON_NOT_ENOUGH_CTX_SPACE   (-1)
 #define BLU_JSON_ERROR_PARSING          (-2)
 #define BLU_JSON_INVALID_JSON           (-3)
+#define BLU_JSON_KEY_NOT_FOUND          (-4)
 
-int blu_json_parse(void* ctx, unsigned int max_ctx_len, const char* json, unsigned int json_len);
+int blu_json_parse(void *ctx, unsigned int max_ctx_len, const char* json, unsigned int json_len);
 
 #ifdef __cplusplus
 }
