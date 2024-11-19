@@ -47,7 +47,10 @@
 
 #define INVALID_OFFSET              (UINT16_MAX)
 
+#define INIT_MAGIC  (0xDEADBEEFU)
+
 #define LOG(...) printf(__VA_ARGS__)
+#define CALL_LOG_FUNC(_func)    (_func)
 
 /*************************
  * Structures
@@ -127,6 +130,83 @@ typedef struct __PACKED {
     } u;
 } json_type_t;
 
+/*************************
+ * Logging Functions
+ ************************/
+static void _log_token(const json_token_t* p, const char *json, const uint8_t *ctx)
+{
+    const char *val_type_strings[] = {
+        [BLU_JSON_VAL_PRIMITIVE] =  "PRIMITIVE",
+        [BLU_JSON_VAL_OBJ] =        "OBJECT",
+        [BLU_JSON_VAL_ARRAY] =      "ARRAY"
+    };
+    const char *datatype_strings[] = {
+        [BLU_JSON_TYPE_INT] =       "INT",
+        [BLU_JSON_TYPE_FLOAT] =     "FLOAT",
+        [BLU_JSON_TYPE_STRING] =    "STRING",
+        [BLU_JSON_TYPE_BOOL] =      "BOOL",
+        [BLU_JSON_TYPE_NULL] =      "NULL",
+        [BLU_JSON_TYPE_MIXED] =     "MIXED"
+    };
+    
+    LOG("\n\nToken: %.*s \n", p->key.len, &json[p->key.json_off == INVALID_OFFSET ? 0 : p->key.json_off]);
+    LOG("   Type %s\n", val_type_strings[GET_TOKEN_TYPE(p->type)]);
+    LOG("   Data %s\n", datatype_strings[GET_DATA_TYPE(p->type)]);
+
+    if (p->parent_ctx_off == INVALID_OFFSET) {
+        LOG("   Parent: Invalid \n");
+    } else {
+        const json_token_t* parent = (const json_token_t*)&ctx[p->parent_ctx_off];
+        LOG("   Parent: %.*s \n", parent->key.len, &json[parent->key.json_off == INVALID_OFFSET ? 0 : parent->key.json_off]);
+    }
+
+    if (p->sibling_ctx_off == INVALID_OFFSET) {
+        LOG("   Sibling: Invalid \n");
+    } else {
+        const json_token_t* sib = (const json_token_t*)&ctx[p->sibling_ctx_off];
+        LOG("   Sibling: %.*s \n", sib->key.len, json[sib->key.json_off == INVALID_OFFSET ? 0 : sib->key.json_off]);
+    }
+
+    if (GET_TOKEN_TYPE(p->type) == BLU_JSON_VAL_PRIMITIVE) {
+        switch (GET_DATA_TYPE(p->type))
+        {
+        case BLU_JSON_TYPE_INT: {
+            prim_int_t* val = (prim_int_t*)p; 
+            LOG("   Value (int): %d \n", val->int_val);
+            break;
+        }
+        case BLU_JSON_TYPE_FLOAT: {
+            prim_float_t* val = (prim_float_t*)p; 
+            LOG("   Value (float): %.6f \n", val->float_val);
+            break;
+        }
+        case BLU_JSON_TYPE_STRING: {
+            prim_string_t *str = (prim_string_t *)p;
+            LOG("   Value (str): %.*s \n", str->val.len, json[str->val.json_off == INVALID_OFFSET ? 0 : str->val.json_off]);
+            break;
+        }
+        case BLU_JSON_TYPE_BOOL: {
+            prim_bool_t* val = (prim_bool_t*)p; 
+            LOG("   Value (bool): %u \n", val->bool_val);
+            break;
+        }
+        case BLU_JSON_TYPE_NULL: {
+            LOG("   Value (null) \n");
+            break;
+        }
+        case BLU_JSON_TYPE_MIXED: {
+            LOG("   Value (mixed) \n");
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
+/*************************
+ * Implementation
+ ************************/
 static int move_to_any_char(struct parser_state_t *state_p, const char *c, uint8_t num_chars, bool is_move_off_past)
 {
     uint16_t i = state_p->cur_json_off;
@@ -239,17 +319,20 @@ static int check_and_close_object(struct parser_state_t *state_p, enum blu_json_
     /* is closing object */
     obj_t* obj_p = (obj_t*)&state_p->ctx_p[state_p->cur_parent_ctx_off];
     obj_p->len = state_p->cur_json_off + 1 - obj_p->json_start_off;
+    
+    /* Change current parent info to parents parent */
     state_p->cur_parent_ctx_off = obj_p->t.parent_ctx_off;
 
     rc = move_json_offset(state_p, 1);
 
     if (state_p->cur_parent_ctx_off == INVALID_OFFSET && type == BLU_JSON_VAL_OBJ) {
-        
         return 2;
     }
     
     /* set current parent type */
     obj_p = (obj_t*)&state_p->ctx_p[state_p->cur_parent_ctx_off];
+    state_p->cur_key_json_off = obj_p->t.key.json_off;
+    state_p->cur_key_len = obj_p->t.key.len;
     *new_cur_parent_p = GET_TOKEN_TYPE(obj_p->t.type);
 
     return rc < 0 ? rc : 1;
@@ -269,8 +352,22 @@ static int push_obj_arr_token(struct parser_state_t *state_p, enum blu_json_val_
     }
 
     obj_t* p = (obj_t*)ctx_mark_p;
-    p->t.key.len = state_p->cur_key_len;
-    p->t.key.json_off = state_p->cur_key_json_off;
+    bool is_parent_array = false;
+    
+    if (state_p->cur_parent_ctx_off != INVALID_OFFSET) {
+        json_token_t* parent_p = (json_token_t*)&state_p->ctx_p[state_p->cur_parent_ctx_off];
+        if (GET_TOKEN_TYPE(parent_p->type) == BLU_JSON_VAL_ARRAY) {
+            p->t.key.len = 0;
+            p->t.key.json_off = INVALID_OFFSET;
+            is_parent_array = true;
+        }
+    }
+
+    if (!is_parent_array) {
+        p->t.key.len = state_p->cur_key_len;
+        p->t.key.json_off = state_p->cur_key_json_off;
+    }
+
     p->t.type = 0;
     p->t.type = SET_TOKEN_TYPE(p->t.type, type);
     p->t.type = SET_DATA_TYPE(p->t.type, BLU_JSON_TYPE_MIXED);
@@ -287,6 +384,8 @@ static int push_obj_arr_token(struct parser_state_t *state_p, enum blu_json_val_
 
     state_p->cur_ctx_off += sizeof(obj_t);
     check_and_update_ctx_size(state_p);
+
+    CALL_LOG_FUNC(_log_token(p, state_p->json_p, state_p->ctx_p));
 
     return 0;
 }
@@ -335,8 +434,6 @@ static int get_next_key(struct parser_state_t *state_p)
     
     if (++state_p->cur_json_off + state_p->json_p >= state_p->json_end_p)
         return BLU_JSON_INVALID_JSON;
-    
-    LOG("Retrieved key %.4s", &state_p->json_p[state_p->cur_key_json_off]);
 
     return 0;
 }
@@ -575,6 +672,7 @@ static int push_prim_token(struct parser_state_t *state_p)
 
     /* push prim token to ctx buf */
     memcpy(&state_p->ctx_p[state_p->cur_ctx_off], &type_token, push_ctx_size);
+    CALL_LOG_FUNC(_log_token(&state_p->ctx_p[state_p->cur_ctx_off], state_p->json_p, state_p->ctx_p));
     state_p->cur_ctx_off += push_ctx_size;
     check_and_update_ctx_size(state_p);
 
@@ -699,3 +797,99 @@ int blu_json_parse(void* ctx, unsigned int max_ctx_len, const char* json, unsign
 
     return BLU_JSON_ERROR_PARSING;
 }
+
+int blu_json_key_it_init(struct key_it_state_t *it, const void *ctx, const char* json, unsigned int json_len)
+{
+    if (it == NULL || ctx == NULL || json == NULL)
+        return BLU_JSON_KEY_INVALID_PARAMS;
+    
+    it->ctx = ctx + SIZEOF_CTX_LEN;
+    it->ctx_len = *((uint16_t*)ctx);
+    it->json = json;
+    it->json_len = json_len;
+    it->is_init_magic = INIT_MAGIC;
+    it->last_ctx_off = INVALID_OFFSET;
+    return 0;
+}
+
+static int get_token_size(const json_token_t *cur_t_p)
+{  
+    switch (GET_TOKEN_TYPE(cur_t_p->type))
+    {
+    case BLU_JSON_VAL_OBJ:
+        return sizeof(obj_t);
+    case BLU_JSON_VAL_ARRAY:
+        return sizeof(arr_t);
+    case BLU_JSON_VAL_PRIMITIVE:
+        break;
+    default:
+        return BLU_JSON_ERROR_PARSING;
+    }
+
+    switch (GET_DATA_TYPE(cur_t_p->type))
+    {
+    case BLU_JSON_TYPE_INT:
+        return sizeof(prim_int_t);
+    case BLU_JSON_TYPE_FLOAT:
+        return sizeof(prim_float_t);
+    case BLU_JSON_TYPE_STRING:
+        return sizeof(prim_string_t);
+    case BLU_JSON_TYPE_BOOL:
+        return sizeof(prim_bool_t);
+    case BLU_JSON_TYPE_NULL:
+        return sizeof(prim_null_t);
+    default:
+        return BLU_JSON_ERROR_PARSING;
+    }
+}
+
+bool blu_json_key_it(struct key_it_state_t *it, struct blu_json_key_t *key, struct blu_json_key_str_t *parents, uint8_t max_parents, uint8_t *num_parents_out)
+{
+    if (it == NULL || key == NULL)
+        return false;
+    
+    if (it->ctx == NULL || it->json == NULL || it->is_init_magic != INIT_MAGIC)
+        return false;
+
+    json_token_t *token_p = NULL;
+    int rc = 0;
+    enum blu_json_val_types_e last_type;
+
+    if (it->last_ctx_off == INVALID_OFFSET) {
+        it->last_ctx_off = 0;
+    }
+
+    /* move off last token */
+    token_p = (json_token_t*)(it->ctx + it->last_ctx_off);
+    last_type = GET_TOKEN_TYPE(token_p->type);
+
+    do {
+        rc = get_token_size(token_p);
+        if (rc < 0)
+            return false;
+
+        it->last_ctx_off += rc;
+
+        if (it->last_ctx_off >= it->ctx_len)
+            return false;
+
+        token_p = (json_token_t*)(it->ctx + it->last_ctx_off);
+
+        key->key.key = (const char*)(it->json + token_p->key.json_off);
+        key->key.len = token_p->key.len;
+        key->meta.obj_type = GET_TOKEN_TYPE(token_p->type);
+        key->meta.data_type = GET_DATA_TYPE(token_p->type);
+    } while (key->key.key == INVALID_OFFSET || key->key.len == 0);
+
+    if (parents != NULL && num_parents_out != NULL) {
+        *num_parents_out = 0;
+        while (*num_parents_out < max_parents && token_p->parent_ctx_off != INVALID_OFFSET && token_p->parent_ctx_off != 0) {
+            token_p = (json_token_t*)(it->ctx + token_p->parent_ctx_off);
+            parents[*num_parents_out].key = (const char*)(it->json + token_p->key.json_off);
+            parents[*num_parents_out++].len = token_p->key.len;
+        }
+    }
+
+    return true;
+}
+

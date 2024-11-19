@@ -26,8 +26,38 @@ enum blu_json_datatypes_e {
 #define BLU_JSON_ERROR_PARSING          (-2)
 #define BLU_JSON_INVALID_JSON           (-3)
 #define BLU_JSON_KEY_NOT_FOUND          (-4)
+#define BLU_JSON_KEY_INVALID_PARAMS     (-5)
+#define BLU_JSON_KEY_PARAM_NOT_INIT     (-6)
+
+struct blu_json_key_str_t {
+    uint8_t len;
+    const char *key;
+};
+
+struct blu_json_key_metadata_t {
+    enum blu_json_val_types_e obj_type;
+    enum blu_json_datatypes_e data_type;
+};
+
+struct blu_json_key_t {
+    struct blu_json_key_str_t key;
+    struct blu_json_key_metadata_t meta;
+};
 
 int blu_json_parse(void *ctx, unsigned int max_ctx_len, const char* json, unsigned int json_len);
+
+struct key_it_state_t {
+    const void *ctx;
+    uint16_t ctx_len;
+    const char* json;
+    unsigned int json_len;
+    uint32_t is_init_magic;
+    uint16_t last_ctx_off;
+};
+
+int blu_json_key_it_init(struct key_it_state_t *it, const void *ctx, const char* json, unsigned int json_len);
+bool blu_json_key_it(struct key_it_state_t *it, struct blu_json_key_t *key, struct blu_json_key_str_t *parents, uint8_t max_parents, uint8_t *num_parents_out);
+
 
 #ifdef __cplusplus
 }
