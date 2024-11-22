@@ -19,7 +19,8 @@ enum blu_json_datatypes_e {
     BLU_JSON_TYPE_STRING,
     BLU_JSON_TYPE_BOOL,
     BLU_JSON_TYPE_NULL,
-    BLU_JSON_TYPE_MIXED
+    BLU_JSON_TYPE_MIXED,
+    BLU_JSON_TYPE_NONE
 };
 
 #define BLU_JSON_NOT_ENOUGH_CTX_SPACE   (-1)

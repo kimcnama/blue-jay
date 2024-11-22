@@ -146,18 +146,21 @@ static void _log_token(const json_token_t* p, const char *json, const uint8_t *c
         [BLU_JSON_TYPE_STRING] =    "STRING",
         [BLU_JSON_TYPE_BOOL] =      "BOOL",
         [BLU_JSON_TYPE_NULL] =      "NULL",
-        [BLU_JSON_TYPE_MIXED] =     "MIXED"
+        [BLU_JSON_TYPE_MIXED] =     "MIXED",
+        [BLU_JSON_TYPE_NONE] =      "NONE"
     };
     
     LOG("\n\nToken: %.*s \n", p->key.len, &json[p->key.json_off == INVALID_OFFSET ? 0 : p->key.json_off]);
-    LOG("   Type %s\n", val_type_strings[GET_TOKEN_TYPE(p->type)]);
-    LOG("   Data %s\n", datatype_strings[GET_DATA_TYPE(p->type)]);
+    LOG("   Type: %s\n", val_type_strings[GET_TOKEN_TYPE(p->type)]);
+    LOG("   Data: %s\n", datatype_strings[GET_DATA_TYPE(p->type)]);
+    LOG("   ID: %p\n", p);
 
     if (p->parent_ctx_off == INVALID_OFFSET) {
         LOG("   Parent: Invalid \n");
     } else {
         const json_token_t* parent = (const json_token_t*)&ctx[p->parent_ctx_off];
         LOG("   Parent: %.*s \n", parent->key.len, &json[parent->key.json_off == INVALID_OFFSET ? 0 : parent->key.json_off]);
+        LOG("   Parent ID: %p \n", parent);
     }
 
     if (p->sibling_ctx_off == INVALID_OFFSET) {
@@ -295,10 +298,12 @@ static inline bool is_closing_object(struct parser_state_t *state_p, enum blu_js
     switch (state_p->json_p[state_p->cur_json_off])
     {
     case JSON_OBJ_END:
-        *closing_type_p = BLU_JSON_VAL_OBJ;
+        if (closing_type_p)
+            *closing_type_p = BLU_JSON_VAL_OBJ;
         return true;
     case JSON_ARR_END:
-        *closing_type_p = BLU_JSON_VAL_ARRAY;
+        if (closing_type_p)
+            *closing_type_p = BLU_JSON_VAL_ARRAY;
         return true;
     default:
         return false;
@@ -331,9 +336,27 @@ static int check_and_close_object(struct parser_state_t *state_p, enum blu_json_
     
     /* set current parent type */
     obj_p = (obj_t*)&state_p->ctx_p[state_p->cur_parent_ctx_off];
+    // LOG("New Parent:");
+    // CALL_LOG_FUNC(_log_token(obj_p, state_p->json_p, state_p->ctx_p));
     state_p->cur_key_json_off = obj_p->t.key.json_off;
     state_p->cur_key_len = obj_p->t.key.len;
     *new_cur_parent_p = GET_TOKEN_TYPE(obj_p->t.type);
+
+    if (rc > 0) {
+        /* if next char is not , or closing object then error */
+        const char skip_chars[] = {' ', '\\', JSON_COMMA};
+        rc = move_while_char_eq(state_p, skip_chars, 2);
+        if (rc >= 0) {
+            bool is_comma = state_p->json_p[state_p->cur_json_off] == JSON_COMMA;
+            bool is_closingobj = is_closing_object(state_p, NULL);
+            
+            if (!is_comma && !is_closingobj)
+                return BLU_JSON_ERROR_PARSING;
+            if (is_comma)
+                rc = move_while_char_eq(state_p, skip_chars, 3);
+
+        }
+    }
 
     return rc < 0 ? rc : 1;
 }
@@ -359,6 +382,8 @@ static int push_obj_arr_token(struct parser_state_t *state_p, enum blu_json_val_
         if (GET_TOKEN_TYPE(parent_p->type) == BLU_JSON_VAL_ARRAY) {
             p->t.key.len = 0;
             p->t.key.json_off = INVALID_OFFSET;
+            state_p->cur_key_len = 0;
+            state_p->cur_key_json_off = INVALID_OFFSET;
             is_parent_array = true;
         }
     }
@@ -370,7 +395,7 @@ static int push_obj_arr_token(struct parser_state_t *state_p, enum blu_json_val_
 
     p->t.type = 0;
     p->t.type = SET_TOKEN_TYPE(p->t.type, type);
-    p->t.type = SET_DATA_TYPE(p->t.type, BLU_JSON_TYPE_MIXED);
+    p->t.type = SET_DATA_TYPE(p->t.type, BLU_JSON_TYPE_NONE);
     p->t.parent_ctx_off = state_p->cur_parent_ctx_off;
     p->t.sibling_ctx_off = INVALID_OFFSET;
     p->json_start_off = state_p->cur_json_off;
@@ -660,6 +685,16 @@ static int push_prim_token(struct parser_state_t *state_p)
 
     if (remaining_ctx_space < push_ctx_size)
         return BLU_JSON_NOT_ENOUGH_CTX_SPACE;
+
+    if (token.parent_ctx_off != INVALID_OFFSET) {
+        /* Set parent data type */
+        json_token_t* parent_p = (json_token_t*)&state_p->ctx_p[token.parent_ctx_off];
+        if (GET_DATA_TYPE(parent_p->type) == BLU_JSON_TYPE_NONE) {
+            parent_p->type = SET_DATA_TYPE(parent_p->type, data_type);
+        } else if (GET_DATA_TYPE(parent_p->type) != data_type) {
+            parent_p->type = SET_DATA_TYPE(parent_p->type, BLU_JSON_TYPE_MIXED);
+        }
+    }
 
     if (state_p->last_sibling_ctx_off != INVALID_OFFSET) {
         /* set last siblings offset to point to me */
