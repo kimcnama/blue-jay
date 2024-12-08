@@ -10,6 +10,7 @@ TEST(tsuite_simple, test_parse) {
   unsigned char ctx[1024]; 
 
   EXPECT_TRUE(0 < blu_json_parse(ctx, sizeof(ctx), simple_json, sizeof(simple_json)));
+  blu_json_print_tokens(ctx, simple_json);
   
   struct key_it_state_t it;
   EXPECT_EQ(0, blu_json_key_it_init(&it, ctx, simple_json, sizeof(simple_json)));
@@ -24,4 +25,8 @@ TEST(tsuite_simple, test_parse) {
     memcpy(key, key_info.key.key, MIN(sizeof(key), key_info.key.len));
     printf("Key=%s \n", key);
   }
+
+  float x;
+  blu_json_get_primitive_value(ctx, simple_json, sizeof(simple_json), &x, sizeof(x), 1, "b");
+  printf("Key=%.4f \n", x);
 }
